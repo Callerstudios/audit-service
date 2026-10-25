@@ -5,7 +5,9 @@ import { config } from "./config.js";
 import { db } from "./firebase.js";
 import { HttpError } from "./lib/http-error.js";
 import { createEventsRouter } from "./routes/events.js";
+import { createAuditReviewRouter } from "./routes/audit-review.js";
 import { IngestService } from "./services/ingest-service.js";
+import { getReceiptPublicKeys } from "./services/receipt-signing.js";
 
 const app = express();
 const service = new IngestService(db);
@@ -29,6 +31,7 @@ app.get("/v1/health/ready", async (_req, res) => {
     res.status(503).json({ status: "unavailable" });
   }
 });
+app.get("/v1/keys", (_req, res) => res.json(getReceiptPublicKeys()));
 
 app.use("/v1", rateLimit({
   windowMs: config.RATE_LIMIT_WINDOW_MS,
@@ -37,6 +40,7 @@ app.use("/v1", rateLimit({
   legacyHeaders: false,
 }));
 app.use("/v1", createEventsRouter(service));
+app.use("/v1", createAuditReviewRouter(service));
 
 app.use((_req, res) => res.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found." } }));
 

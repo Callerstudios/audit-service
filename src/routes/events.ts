@@ -7,9 +7,8 @@ import { IngestService } from "../services/ingest-service.js";
 
 export function createEventsRouter(service: IngestService) {
   const router = Router();
-  router.use(authenticateProducer);
 
-  router.post("/events", async (req, res, next) => {
+  router.post("/events", authenticateProducer, async (req, res, next) => {
     try {
       let payload;
       try {
@@ -24,7 +23,7 @@ export function createEventsRouter(service: IngestService) {
     }
   });
 
-  router.get("/receipts/:receiptId", async (req, res, next) => {
+  router.get("/receipts/:receiptId", authenticateProducer, async (req, res, next) => {
     try {
       const receipt = await service.getReceipt(req.producer!.id, req.params.receiptId);
       res.json({ receipt });

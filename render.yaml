@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: universal-audit-service
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /v1/health/live
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_KEY
+        sync: false
+      - key: PRODUCER_KEYS_JSON
+        sync: false
+      - key: REVIEWER_KEYS_JSON
+        sync: false
+      - key: RECEIPT_KEY_ID
+        value: receipt-key-2026-01
+      - key: RECEIPT_SIGNING_PRIVATE_KEY
+        sync: false
+      - key: RECEIPT_PUBLIC_KEYS_JSON
+        value: "{}"
+      - key: MAX_EVENTS_PER_BATCH
+        value: "100"
+      - key: MAX_EVENT_BODY_BYTES
+        value: "262144"
+      - key: AUTH_CLOCK_SKEW_SECONDS
+        value: "300"
+      - key: NONCE_TTL_SECONDS
+        value: "900"
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: RATE_LIMIT_MAX
+        value: "120"

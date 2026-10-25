@@ -1,0 +1,54 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "auditEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "producerId", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "auditEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "producerId", "order": "ASCENDING" },
+        { "fieldPath": "eventType", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "auditEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "producerId", "order": "ASCENDING" },
+        { "fieldPath": "outcome", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "auditEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "producerId", "order": "ASCENDING" },
+        { "fieldPath": "actorId", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "auditEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "producerId", "order": "ASCENDING" },
+        { "fieldPath": "targetId", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

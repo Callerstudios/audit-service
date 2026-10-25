@@ -7,5 +7,9 @@ declare module "express-serve-static-core" {
       id: string;
       keyId: string;
     };
+    reviewer?: {
+      id: string;
+      keyId: string;
+    };
   }
 }

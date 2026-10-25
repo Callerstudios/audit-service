@@ -1,7 +1,7 @@
 import app from "./app.js";
 import { config } from "./config.js";
 
-const server = app.listen(config.PORT, () => {
+const server = app.listen(config.PORT, "0.0.0.0", () => {
   console.log(`Audit service listening on port ${config.PORT}`);
 });
 

@@ -10,7 +10,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "deploy:firestore": "firebase deploy --only firestore"
   },
   "dependencies": {
     "dotenv": "^16.6.1",

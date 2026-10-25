@@ -1,71 +1,119 @@
 # Universal Audit Service
 
-A standalone HTTP service for receiving security audit events from independent software systems. The first version uses Express, TypeScript, and Cloud Firestore. Producers can be written in any language that can make HTTPS requests and compute HMAC-SHA256 signatures.
+A standalone Express, TypeScript, and Firestore service for receiving and reviewing security audit events from independent software systems. Any trusted server that can make HTTPS requests and compute HMAC-SHA256 can act as a producer.
 
-This starter implements **Stage 1: secure ingestion** from the supplied design. It is a foundation for development, not a production claim of tamper-proof storage.
+This is a functional first version of the service: it accepts signed event batches, creates signed receipts, links events into a per-producer hash chain, supports producer-scoped idempotent retries, allows authorized reviewers to search and verify records, and logs reviewer access.
 
-## What is included
+## What the service provides
 
-- HMAC-SHA256 producer authentication with timestamp freshness and one-time nonces.
-- A versioned JSON event contract and bounded batch ingestion.
-- Firestore transaction-based idempotency by producer and batch ID.
-- Server-generated receipts, retrievable by the producer that submitted them.
-- Payload-size and in-process rate limits, health endpoints, and generic error responses.
-- A Firestore rules file that denies direct client access. The Admin SDK uses Google Cloud IAM and bypasses Firestore Security Rules.
+- Producer HMAC authentication with timestamp checks and single-use nonces.
+- Reviewer HMAC authentication with separate credentials and read-only audit routes.
+- Versioned event validation and bounded batches.
+- Firestore transactions for batch idempotency and per-producer event sequencing.
+- Ed25519-signed receipts and a public-key endpoint for signature verification.
+- Event hash links and a batch verification endpoint.
+- Search by producer, event type, outcome, actor ID, target ID, and event time range, with pagination.
+- Reviewer access records for successful searches, event reads, and verification requests.
+- Firestore Rules that deny direct client access. The Firebase Admin SDK uses Google Cloud IAM and bypasses Security Rules.
 
-Not included yet: signed receipts, hash-chain checkpoints, immutable archive, reviewer/search API, producer-management UI/API, delivery worker/outbox integration, alerts, key lifecycle automation, backup/restore procedures, or production deployment configuration.
+## Security boundary
 
-## Important Firestore limit
+The HTTP API does not provide a way to update or delete accepted events. Firestore itself is still mutable to privileged Google Cloud identities. A project administrator or compromised identity with sufficient permissions can rewrite Firestore events, receipts, chain heads, and reviewer logs. The service's Ed25519 signature helps detect changed receipt contents if a client already trusts the signing public key. It does not protect against compromise of the signing private key.
 
-The HTTP API has no update or delete operation for accepted events. That does **not** make Firestore records immutable. This service uses the Firebase Admin SDK, which is privileged; an operator or compromised Google Cloud identity with sufficient permissions can change or delete records. Firestore Security Rules do not constrain the Admin SDK. A hash chain stored only in the same mutable database would not solve this trust problem either.
+This version is tamper-evident within the service boundary; it is not independent immutable custody. Before using it as evidence for high-risk privileged operations, add an archive or checkpoint in independently administered immutable storage, protect signing keys in a managed key store, and validate backup and recovery procedures. Keep those operations closed until the controls required by your governance policy are deployed and verified.
 
-Use this version to develop and integrate the ingestion contract. Before relying on the service for custody of high-risk evidence, add separately administered immutable archival/checkpoints, signing-key custody, independent monitoring, and verified recovery. Keep privileged business operations closed until the required custody guarantees are actually deployed and tested.
-
-## Requirements
+## Requirements and local setup
 
 - Node.js 22 or newer.
 - A Firebase project with Cloud Firestore enabled.
-- Application Default Credentials with access to that project. In Google Cloud, use a dedicated service account with the narrowest available permissions. For local development, use `gcloud auth application-default login` or a service-account file that is never committed.
+- A service account with permission to read and write the service's Firestore data.
+- Producer and reviewer keys, plus an Ed25519 key pair for receipt signing.
 
-## Run locally
+Install and prepare local configuration:
 
 ```bash
 npm install
 cp .env.example .env
 ```
 
-Set `FIREBASE_PROJECT_ID`. Generate a 32-byte or longer random secret for each producer key, for example with `openssl rand -hex 32`, then put the value in `PRODUCER_KEYS_JSON`. Do not use the example placeholder as a real credential.
+Set `FIREBASE_PROJECT_ID` to the Firestore project the service should use. For local development, either set `FIREBASE_KEY` to the service-account JSON as a single-line JSON string or leave it empty and use Application Default Credentials with `gcloud auth application-default login`. In either case, the credential needs access to the project named by `FIREBASE_PROJECT_ID`.
 
-For a local Firestore Emulator, start it with the Firebase CLI and set `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080` in `.env`. Emulator data is for development only.
+Generate separate random producer and reviewer secrets (at least 32 characters), for example with `openssl rand -hex 32`, then configure them in `PRODUCER_KEYS_JSON` and `REVIEWER_KEYS_JSON`. The producer secret belongs in the sending software; the reviewer secret belongs only to authorized review clients.
+
+Generate the Ed25519 receipt-signing key pair:
+
+```bash
+openssl genpkey -algorithm Ed25519 -out receipt-private.pem
+openssl pkey -in receipt-private.pem -pubout -out receipt-public.pem
+```
+
+Put the private PEM in `RECEIPT_SIGNING_PRIVATE_KEY` and set a unique `RECEIPT_KEY_ID`. Use escaped newlines (`\n`) if storing the PEM as a single-line environment value. Keep the private key secret. The current public key is returned by `GET /v1/keys`; store and pin it in trusted clients through a channel independent of this service. Keep old public keys in `RECEIPT_PUBLIC_KEYS_JSON` when rotating signing keys so historical signatures remain verifiable.
+
+For a local Firestore Emulator, set `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080` in `.env` and start the emulator with the Firebase CLI. Emulator data is for development only.
+
+Deploy the Firestore rules and search indexes with the Firebase CLI after selecting the correct Firebase project:
+
+```bash
+firebase use your-firebase-project-id
+npm run deploy:firestore
+```
 
 ```bash
 npm run dev
 ```
 
-The live endpoint is `GET http://localhost:4000/v1/health/live`. The ready endpoint checks Firestore connectivity at `GET http://localhost:4000/v1/health/ready`.
+For Render, the repository includes `render.yaml`. Connect the repository as a Blueprint and provide the prompted secret values. The service uses Render's `PORT` environment variable and its `/v1/health/live` health check. Set `FIREBASE_KEY` to the full service-account JSON value. The Blueprint keeps credential values out of the file.
 
-## Producer configuration and key rotation
+The service reads `PORT` from the environment (Render provides it automatically; local default is `4000`) and binds to `0.0.0.0`.
 
-`PRODUCER_KEYS_JSON` maps producer ID to one or more key IDs and secrets:
+## Firebase credentials on Render
+
+The service supports a conventional Firebase service-account key in `FIREBASE_KEY`. In Render, add `FIREBASE_KEY` as a secret environment variable and paste the full service-account JSON as its value. Do not commit that JSON to GitHub or include it in a `render.yaml` file. Set `FIREBASE_PROJECT_ID` separately to the project where this service's Firestore lives. The service-account identity must have access to that target project; the `project_id` inside the key does not grant access by itself.
+
+You can also upload the JSON as a Render Secret File and set `GOOGLE_APPLICATION_CREDENTIALS` to its path. If `FIREBASE_KEY` is not set, the SDK's Application Default Credentials lookup uses `GOOGLE_APPLICATION_CREDENTIALS`. Keep the account limited to the needed project and rotate the key if it may have been exposed.
+
+## Producer and reviewer credential format
+
+Both maps support multiple key IDs per identity so keys can be rotated without downtime:
 
 ```json
 {
   "cycling-club-manager": {
-    "key-2026-01": "a-long-random-secret-value-at-least-32-characters"
-  },
-  "another-software-system": {
-    "key-2026-01": "another-long-random-secret-value-at-least-32-characters"
+    "key-2026-01": "a-long-random-producer-secret"
   }
 }
 ```
 
-The service accepts any producer configured this way. During rotation, add a new key ID while keeping the old one temporarily, update the producer, then remove the old key after requests have moved to the new key. For deployment, inject secrets from a managed secret store instead of committing them to source or putting them in a plain-text deployment file.
+```json
+{
+  "audit-reviewer": {
+    "key-2026-01": "a-different-long-random-reviewer-secret"
+  }
+}
+```
 
-## API
+For each identity, add a new key ID, update the client, then remove the old key after requests use the new one. Inject secrets from Render's secret environment settings rather than source files.
 
-### `POST /v1/events`
+## API endpoints
 
-Submit a batch. Use the **same `batchId` and exact logical payload** when retrying after a timeout. A successful first submission returns `201`; a repeated identical submission returns the original receipt with `200`. Reusing a batch ID with different content, or sending an event ID already accepted in another batch, returns `409`.
+### Health and signing keys
+
+| Method and path | Authentication | Purpose |
+| --- | --- | --- |
+| `GET /v1/health/live` | None | Process is responding. |
+| `GET /v1/health/ready` | None | Firestore can be queried. |
+| `GET /v1/keys` | None | Returns receipt public keys and the current key ID. |
+
+Health responses do not disclose configuration. Public keys are not secret, but clients should pin the expected key independently rather than blindly trusting a key downloaded from the same endpoint they are trying to verify.
+
+### Producer endpoints
+
+| Method and path | Authentication | Purpose |
+| --- | --- | --- |
+| `POST /v1/events` | Producer HMAC | Submit a bounded batch. |
+| `GET /v1/receipts/{receiptId}` | Producer HMAC | Retrieve a receipt owned by that producer. |
+
+Example ingestion body:
 
 ```json
 {
@@ -87,32 +135,50 @@ Submit a batch. Use the **same `batchId` and exact logical payload** when retryi
 }
 ```
 
-`eventType` uses lowercase dotted names (for example, `auth.login_success`). `outcome` must be `success`, `failure`, `denied`, or `unknown`. Unknown event fields are rejected. Event IDs must be unique within the batch and unique for a producer. The configured body-size and batch-count limits apply.
+`eventType` uses lowercase dotted names. `outcome` is `success`, `failure`, `denied`, or `unknown`. `actor`, `target`, `correlationId`, `reasonCode`, and `metadata` are optional. Unknown fields are rejected. A first accepted batch returns `201`; a retry with the same `batchId` and same content returns the original signed receipt with `200`. Use a new nonce and signature for every retry. Reusing a batch ID with different content, or reusing an event ID in another batch, returns `409`.
 
-Do not submit passwords, tokens, cookies, session IDs, secrets, recovery codes, or unnecessary personal data. The service rejects metadata keys that look sensitive, but no key-name filter can reliably detect every sensitive value. Producers remain responsible for their event content.
+The receipt includes its event IDs, batch digest, sequence range, chain hashes, acceptance time, and Ed25519 signature. It is only a durable receipt from this service; it does not prove independent custody from a privileged Firestore administrator.
 
-### `GET /v1/receipts/{receiptId}`
+### Reviewer endpoints
 
-Returns a receipt only to the producer that submitted it. A receipt confirms that the service committed the batch to Firestore. In this initial version it is **not cryptographically signed** and is not an independent proof against a privileged Firestore administrator.
+| Method and path | Authentication | Purpose |
+| --- | --- | --- |
+| `GET /v1/audit/events` | Reviewer HMAC | Search one producer's events. |
+| `GET /v1/audit/events/{producerId}/{eventId}` | Reviewer HMAC | Read one event. |
+| `POST /v1/audit/verify` | Reviewer HMAC | Verify a batch's receipt signature and stored event chain. |
 
-### Health
+Search requires `producerId`. Optional parameters are `eventType`, `outcome`, `actorId`, `targetId`, `from`, `to`, `limit` (1–100; default 50), and `pageToken`. Use at most one of `eventType`, `outcome`, `actorId`, and `targetId` per search. `from` and `to` are ISO date values and filter by event occurrence time. Continue pagination by passing back the returned `nextPageToken`.
 
-- `GET /v1/health/live`: process is responding.
-- `GET /v1/health/ready`: Firestore can be queried.
+Example:
 
-Health routes do not require producer authentication and return no configuration details.
+```text
+GET /v1/audit/events?producerId=cycling-club-manager&eventType=auth.login_success&from=2026-10-01T00%3A00%3A00Z&limit=50
+```
 
-## HMAC signing contract
+Verification body:
 
-Each request to `/v1` requires these headers:
+```json
+{
+  "producerId": "cycling-club-manager",
+  "batchId": "outbox-batch-01JAZ8D4P7F1"
+}
+```
 
-- `X-Producer-Id`: configured producer ID.
-- `X-Key-Id`: configured key ID.
-- `X-Timestamp`: Unix timestamp in seconds.
-- `X-Nonce`: a fresh random value of 16–128 characters (`A-Z`, `a-z`, digits, `_`, `-`). Never reuse it.
-- `X-Signature`: lowercase or uppercase hex HMAC-SHA256.
+Verification reports `receiptSignature`, `batchMatchesReceipt`, `eventChain`, and `chainHead` checks. A valid result confirms the Firestore data matches the signed receipt and chain for that batch. It cannot detect a coordinated rewrite of the database and signing key.
 
-Sign the exact UTF-8 bytes sent as the request body. For a request with no body, sign an empty string. Build the signed message as five lines, separated by `\n`, with **no final newline**:
+Successful reviewer searches, event reads, and verification calls are written to `reviewerAccessLogs`. Reviewer permissions currently apply to all producers; add narrower reviewer-to-producer authorization before supporting multiple independent customers with different reviewer scopes.
+
+## HMAC request signing
+
+Authenticated requests use these headers:
+
+- `X-Producer-Id` for producers or `X-Reviewer-Id` for reviewers.
+- `X-Key-Id` for the configured key ID.
+- `X-Timestamp`: Unix time in seconds.
+- `X-Nonce`: fresh random 16–128 character value using letters, digits, `_`, or `-`.
+- `X-Signature`: hex HMAC-SHA256.
+
+Sign the exact UTF-8 request body (empty for GET requests) with this five-line message and no final newline:
 
 ```text
 HTTP_METHOD
@@ -122,64 +188,57 @@ NONCE
 RAW_BODY
 ```
 
-For example: `POST`, `/v1/events`, timestamp, nonce, then the exact JSON string. The server allows a limited clock skew, checks the signature using a timing-safe comparison, and records the nonce to reject replay. Requests outside the configured time window are rejected. Send requests only over HTTPS outside local development.
+The server checks the timestamp window, compares signatures in constant time, and records used nonces to reject replay. Include query parameters exactly as sent when signing a search request. Use HTTPS outside local development.
 
-Node.js signing example (the body string used for signing must be the same string passed to `fetch`):
+Node.js signing helper:
 
 ```ts
 import { createHmac, randomBytes } from "node:crypto";
 
-const producerId = "cycling-club-manager";
-const keyId = "key-2026-01";
-const secret = process.env.AUDIT_PRODUCER_SECRET!;
-const method = "POST";
-const pathAndQuery = "/v1/events";
-const timestamp = Math.floor(Date.now() / 1000).toString();
-const nonce = randomBytes(24).toString("base64url");
-const body = JSON.stringify({
-  schemaVersion: 1,
-  batchId: "outbox-batch-01JAZ8D4P7F1",
-  events: [{
-    eventId: "01JAZ8D4P7F1J4G95M0N4B8T9A",
-    eventType: "auth.login_success",
-    occurredAt: new Date().toISOString(),
-    outcome: "success",
-    actor: { type: "user", id: "user-123" }
-  }]
-});
-const message = [method, pathAndQuery, timestamp, nonce, body].join("\n");
-const signature = createHmac("sha256", secret).update(message, "utf8").digest("hex");
-
-const response = await fetch(`https://audit.example.com${pathAndQuery}`, {
-  method,
-  headers: {
-    "content-type": "application/json",
-    "x-producer-id": producerId,
-    "x-key-id": keyId,
-    "x-timestamp": timestamp,
-    "x-nonce": nonce,
-    "x-signature": signature
-  },
-  body
-});
+async function signedRequest({
+  baseUrl, path, method, identityHeader, identityId, keyId, secret, body = ""
+}: {
+  baseUrl: string; path: string; method: string;
+  identityHeader: "x-producer-id" | "x-reviewer-id"; identityId: string;
+  keyId: string; secret: string; body?: string;
+}) {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = randomBytes(24).toString("base64url");
+  const message = [method.toUpperCase(), path, timestamp, nonce, body].join("\n");
+  const signature = createHmac("sha256", secret).update(message, "utf8").digest("hex");
+  return fetch(`${baseUrl}${path}`, {
+    method,
+    headers: {
+      [identityHeader]: identityId,
+      "x-key-id": keyId,
+      "x-timestamp": timestamp,
+      "x-nonce": nonce,
+      "x-signature": signature,
+      ...(body ? { "content-type": "application/json" } : {})
+    },
+    ...(body ? { body } : {})
+  });
+}
 ```
 
-Include query parameters in `PATH_AND_QUERY` exactly as sent. For `GET /v1/receipts/{receiptId}`, sign the empty body and include the exact path.
+Use `x-producer-id` plus the producer secret for `/events` and `/receipts`; use `x-reviewer-id` plus the reviewer secret for `/audit/*`.
 
-## Firestore collections
+## Firestore collections and indexes
 
-- `auditEvents`: one event record per event ID, scoped by producer.
-- `ingestionBatches`: idempotency record and digest for each accepted batch.
-- `auditReceipts`: producer-scoped receipt data.
-- `requestNonces`: used nonces for replay prevention.
+- `auditEvents`: accepted event payloads, producer sequence, digest, and chain links.
+- `ingestionBatches`: batch idempotency record and chain range.
+- `auditReceipts`: signed receipts.
+- `chainHeads`: latest sequence and chain hash per producer.
+- `requestNonces`: replay protection.
+- `reviewerAccessLogs`: successful reviewer searches, reads, and verification actions.
 
-Configure a Firestore TTL policy on `requestNonces.expiresAt` (collection group `requestNonces`) so replay-protection documents are eventually removed. TTL deletion is asynchronous; nonce freshness is enforced separately by timestamp validation. Do not enable TTL on events, batches, or receipts until a retention policy has been explicitly decided.
+Deploy the indexes in `firestore.indexes.json`. Configure a TTL policy on `requestNonces.expiresAt` (collection group `requestNonces`) so expired replay records are eventually removed. TTL deletion is asynchronous; request timestamps are separately checked. Do not enable TTL on audit events, batches, receipts, chain heads, or reviewer logs until retention and archival requirements are defined.
 
-## Operational notes before production
+## Before production use
 
-- The included rate limiter stores counts in process memory. Use a shared rate-limit store when running multiple replicas.
-- Configure HTTPS at the load balancer or hosting platform, restrict network access where possible, and monitor authentication failures and storage errors.
-- Use a dedicated Firebase/GCP project and service identity for this service, separate from producer applications. Security Rules deny direct client access, but Google Cloud IAM still controls Admin SDK access.
-- Firestore transaction writes are atomic. The transaction function may be retried by Firestore, so it has no external side effects.
-- Add an independent immutable archive/checkpoint and signed receipts before claiming tamper-evident custody. A hash chain or receipt that can be rewritten by the same privileged administrator does not create independent evidence.
-- Connect the producer's transactional outbox only after the producer can retry with the same batch ID, verify receipt responses, and reconcile accepted batches after timeouts.
+- Use HTTPS and secrets management; do not put service-account JSON, producer keys, or signing keys in Git.
+- Limit Firebase service-account IAM permissions and use a separate project/account for the audit service. Never reuse a producer app's broad admin key if a dedicated identity is available.
+- Configure a shared rate-limit store before running multiple service instances; the included limiter is in-memory.
+- Monitor rejected signatures, delivery failures, storage availability, and integrity verification failures.
+- Connect a producer's transactional outbox only when it retries stable batch IDs, verifies signed receipts, and reconciles receipts after timeouts.
+- Add independently administered immutable archive/checkpoints and key custody before claiming strong tamper-resistant audit evidence.
