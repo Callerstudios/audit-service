@@ -27,7 +27,8 @@ app.get("/v1/health/ready", async (_req, res) => {
   try {
     await db.collection("_health").doc("ready").get();
     res.json({ status: "ready" });
-  } catch {
+  } catch (err){
+    console.log(err)
     res.status(503).json({ status: "unavailable" });
   }
 });
