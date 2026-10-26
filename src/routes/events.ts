@@ -25,7 +25,8 @@ export function createEventsRouter(service: IngestService) {
 
   router.get("/receipts/:receiptId", authenticateProducer, async (req, res, next) => {
     try {
-      const receipt = await service.getReceipt(req.producer!.id, req.params.receiptId);
+      const receiptId = requiredPathParam(req.params.receiptId, "receiptId");
+      const receipt = await service.getReceipt(req.producer!.id, receiptId);
       res.json({ receipt });
     } catch (error) {
       next(error);
@@ -33,4 +34,16 @@ export function createEventsRouter(service: IngestService) {
   });
 
   return router;
+}
+
+function requiredPathParam(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new HttpError(
+      400,
+      `${name} must be a single non-empty string.`,
+      "INVALID_SEARCH",
+    );
+  }
+
+  return value;
 }
